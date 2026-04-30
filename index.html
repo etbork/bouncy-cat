@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Bouncy Cat</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #111;
+      font-family: system-ui, sans-serif;
+      color: #eee;
+    }
+    .label {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      font-size: 14px;
+      opacity: 0.6;
+      user-select: none;
+    }
+    #cat {
+      position: absolute;
+      font-size: 64px;
+      will-change: transform;
+      user-select: none;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div class="label">click the cat to speed it up</div>
+  <div id="cat">🐈</div>
+
+  <script>
+    const cat = document.getElementById('cat');
+    let x = 100, y = 100;
+    let vx = 3, vy = 2.5;
+
+    function step() {
+      const w = window.innerWidth - cat.offsetWidth;
+      const h = window.innerHeight - cat.offsetHeight;
+
+      x += vx;
+      y += vy;
+
+      if (x <= 0 || x >= w) { vx = -vx; cat.style.transform = `scaleX(${vx > 0 ? 1 : -1})`; }
+      if (y <= 0 || y >= h) vy = -vy;
+
+      cat.style.left = x + 'px';
+      cat.style.top = y + 'px';
+
+      requestAnimationFrame(step);
+    }
+
+    cat.addEventListener('click', () => {
+      vx *= 1.3;
+      vy *= 1.3;
+    });
+
+    step();
+  </script>
+</body>
+</html>
