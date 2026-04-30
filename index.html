@@ -23,20 +23,35 @@
     #cat {
       position: absolute;
       font-size: 64px;
-      will-change: transform;
+      will-change: transform, filter;
       user-select: none;
       cursor: pointer;
+      transition: filter 0.15s ease-out;
     }
   </style>
 </head>
 <body>
-  <div class="label">click the cat to speed it up</div>
+  <div class="label">click the cat to speed it up · it changes color on every bump</div>
   <div id="cat">🐈</div>
 
   <script>
     const cat = document.getElementById('cat');
     let x = 100, y = 100;
     let vx = 3, vy = 2.5;
+    let hue = 0;
+    let facing = 1;
+
+    function applyLook() {
+      cat.style.transform = `scaleX(${facing})`;
+      cat.style.filter = `hue-rotate(${hue}deg) saturate(1.4)`;
+    }
+
+    function bump() {
+      // Shift hue by an amount that doesn't repeat every 9 bumps,
+      // so the cat actually feels like it's cycling through colors.
+      hue = (hue + 47) % 360;
+      applyLook();
+    }
 
     function step() {
       const w = window.innerWidth - cat.offsetWidth;
@@ -45,8 +60,17 @@
       x += vx;
       y += vy;
 
-      if (x <= 0 || x >= w) { vx = -vx; cat.style.transform = `scaleX(${vx > 0 ? 1 : -1})`; }
-      if (y <= 0 || y >= h) vy = -vy;
+      if (x <= 0 || x >= w) {
+        x = Math.max(0, Math.min(x, w));
+        vx = -vx;
+        facing = vx > 0 ? 1 : -1;
+        bump();
+      }
+      if (y <= 0 || y >= h) {
+        y = Math.max(0, Math.min(y, h));
+        vy = -vy;
+        bump();
+      }
 
       cat.style.left = x + 'px';
       cat.style.top = y + 'px';
@@ -59,6 +83,7 @@
       vy *= 1.3;
     });
 
+    applyLook();
     step();
   </script>
 </body>
