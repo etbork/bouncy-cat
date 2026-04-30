@@ -5,8 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Bouncy Cat</title>
 
-  <!-- Genea Tool Portal SDK + design tokens (gracefully fails locally) -->
-  <link rel="stylesheet" href="/brand/tokens.css" />
+  <!--
+    Genea Tool Portal SDK.
+
+    Per spec this MUST be:
+      • the literal string below
+      • the FIRST <script> in <head>
+      • absolute path /brand/portal-sdk.js (never relative)
+      • no defer / async / type=module / nonce / integrity
+      • before any inline code that reads window.portal
+
+    The portal also documents /brand/tokens.css for shared design
+    tokens. We deliberately do NOT link it: this tool ships a fully
+    self-contained stylesheet, and a missing tokens.css would just
+    add noise to the portal error feed. Re-add the link if a future
+    revision actually consumes a token from it.
+  -->
   <script src="/brand/portal-sdk.js"></script>
 
   <style>
