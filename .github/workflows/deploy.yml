@@ -28,15 +28,11 @@ jobs:
         env:
           KEY: ${{ secrets.PORTAL_DEPLOY_KEY }}
         run: |
-          # Stage all repo files (except git/CI/zip itself) inside assets/
-          # so the portal can serve them at /tools/<slug>/assets/...
+          # Stage the portal-ready (-PR) build inside assets/
+          # so the portal can serve files at /tools/<slug>/assets/...
+          # The original index.html at repo root is the legacy/local build and is NOT shipped.
           mkdir -p staging/assets
-          rsync -a \
-            --exclude='.git' \
-            --exclude='.github' \
-            --exclude='staging' \
-            --exclude='deploy.zip' \
-            ./ staging/assets/
+          rsync -a bouncy-cat-PR/ staging/assets/
           (cd staging && zip -r ../deploy.zip assets)
           echo "--- zip contents ---"
           unzip -l deploy.zip
