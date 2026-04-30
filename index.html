@@ -31,45 +31,65 @@
   </style>
 </head>
 <body>
-  <div class="label">click the cat to speed it up · it changes color on every bump</div>
+  <div class="label">click the cat to speed it up · color + size change on every bump</div>
   <div id="cat">🐈</div>
 
   <script>
     const cat = document.getElementById('cat');
+    const MIN_SIZE = 32;
+    const MAX_SIZE = 140;
+
     let x = 100, y = 100;
     let vx = 3, vy = 2.5;
     let hue = 0;
     let facing = 1;
+    let size = 64;
 
     function applyLook() {
       cat.style.transform = `scaleX(${facing})`;
       cat.style.filter = `hue-rotate(${hue}deg) saturate(1.4)`;
+      cat.style.fontSize = size + 'px';
     }
 
     function bump() {
       // Shift hue by an amount that doesn't repeat every 9 bumps,
       // so the cat actually feels like it's cycling through colors.
       hue = (hue + 47) % 360;
+      // Random size within bounds. Avoid landing exactly on the previous size.
+      let next;
+      do {
+        next = Math.round(MIN_SIZE + Math.random() * (MAX_SIZE - MIN_SIZE));
+      } while (Math.abs(next - size) < 8);
+      size = next;
       applyLook();
     }
 
     function step() {
-      const w = window.innerWidth - cat.offsetWidth;
-      const h = window.innerHeight - cat.offsetHeight;
+      let w = window.innerWidth - cat.offsetWidth;
+      let h = window.innerHeight - cat.offsetHeight;
 
       x += vx;
       y += vy;
 
+      let bumped = false;
       if (x <= 0 || x >= w) {
-        x = Math.max(0, Math.min(x, w));
         vx = -vx;
         facing = vx > 0 ? 1 : -1;
-        bump();
+        bumped = true;
       }
       if (y <= 0 || y >= h) {
-        y = Math.max(0, Math.min(y, h));
         vy = -vy;
+        bumped = true;
+      }
+
+      if (bumped) {
         bump();
+        // Re-measure with the NEW size so a grown cat doesn't clip the wall
+        // and trigger an immediate second bump next frame.
+        w = window.innerWidth - cat.offsetWidth;
+        h = window.innerHeight - cat.offsetHeight;
+        x = Math.max(0, Math.min(x, w));
+        y = Math.max(0, Math.min(y, h));
       }
 
       cat.style.left = x + 'px';
