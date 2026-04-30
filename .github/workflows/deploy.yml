@@ -19,12 +19,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Probe secret length
+        env:
+          KEY: ${{ secrets.PORTAL_DEPLOY_KEY }}
+        run: |
+          echo "PORTAL_DEPLOY_KEY length: ${#KEY}"
+          if [ ${#KEY} -eq 0 ]; then
+            echo "::error::PORTAL_DEPLOY_KEY secret is empty or unset for this workflow"
+            exit 1
+          fi
+          if [ ${#KEY} -ne 64 ]; then
+            echo "::warning::Expected 64-char hex key from portal, got ${#KEY} chars"
+          fi
+
       - name: Zip and deploy
+        env:
+          KEY: ${{ secrets.PORTAL_DEPLOY_KEY }}
         run: |
           zip -r deploy.zip . -x ".git/*" ".github/*"
           curl -f -X POST \
             "https://genea-tool-portal.azurewebsites.net/api/deploy/bouncy-cat-test" \
-            -H "X-Deploy-Key: ${{ secrets.PORTAL_DEPLOY_KEY }}" \
+            -H "X-Deploy-Key: $KEY" \
             -F "files=@deploy.zip" \
             --max-time 120
           echo "Deployed successfully!"
