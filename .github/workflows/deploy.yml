@@ -28,8 +28,20 @@ jobs:
         env:
           KEY: ${{ secrets.PORTAL_DEPLOY_KEY }}
         run: |
-          zip -r deploy.zip . -x ".git/*" ".github/*"
-          # Note: -f removed so we see the response body. -v shows full request/response.
+          # Stage all repo files (except git/CI/zip itself) inside assets/
+          # so the portal can serve them at /tools/<slug>/assets/...
+          mkdir -p staging/assets
+          rsync -a \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='staging' \
+            --exclude='deploy.zip' \
+            ./ staging/assets/
+          (cd staging && zip -r ../deploy.zip assets)
+          echo "--- zip contents ---"
+          unzip -l deploy.zip
+          echo "--- end contents ---"
+          # -f removed so we see the response body. -v shows full request/response.
           # -D - dumps response headers to stdout. -o /tmp/body captures the response body.
           curl -v -X POST \
             "https://genea-tool-portal.azurewebsites.net/api/deploy/bouncy-cat-test" \
