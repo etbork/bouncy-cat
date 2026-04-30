@@ -1,0 +1,30 @@
+# Genea Tool Portal — GitHub Auto-Deploy
+# ────────────────────────────────────────
+# Setup:
+# 1. Save this file in your repo at: .github/workflows/deploy.yml
+# 2. In your GitHub repo, go to Settings → Secrets and variables → Actions
+# 3. Click "New repository secret"
+# 4. Name: PORTAL_DEPLOY_KEY   Value: (paste the deploy key you were given)
+# 5. Push to main — your tool will auto-deploy to the portal!
+
+name: Deploy to Genea Portal
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Zip and deploy
+        run: |
+          zip -r deploy.zip . -x ".git/*" ".github/*"
+          curl -f -X POST \
+            "https://genea-tool-portal.azurewebsites.net/api/deploy/bouncy-cat-test" \
+            -H "X-Deploy-Key: ${{ secrets.PORTAL_DEPLOY_KEY }}" \
+            -F "files=@deploy.zip" \
+            --max-time 120
+          echo "Deployed successfully!"
