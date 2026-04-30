@@ -755,10 +755,17 @@
   //
   //  Compatibility
   //    • Single-file static HTML/CSS/JS, no build step
-  //    • No CDN scripts, no external network requests
-  //    • Sandbox-safe storage (try/catch on localStorage)
-  //    • Uses portal.getUser / portal.sharedData / portal.data
-  //      when available, with graceful local-dev fallback
+  //    • No CDN scripts, no external network requests, no cookies
+  //    • Sandbox-safe storage layered as:
+  //         portal.data / portal.sharedData (cloud, signed-in user)
+  //           → portal.storage  (SDK safe-local replacement)
+  //             → try/catch'd localStorage
+  //               → in-memory no-op
+  //    • Identity resolved via portal.getUser() (Microsoft SSO via the
+  //      portal RPC layer). The "running locally" banner is gated on
+  //      a real getUser() resolution — never on a synchronous SDK
+  //      presence check — so a slow SDK boot or a failed RPC still
+  //      surfaces accurately.
   //
   //  Privacy
   //    • Stores only score, mode, gameplay stats, displayName
@@ -769,23 +776,29 @@
 
     // ----------------------------------------------------------
     //  Portal bootstrap
+    //  portalReady flips true ONLY after portal.getUser() resolves
+    //  successfully. The local-mode banner and the scoreboard
+    //  source pill both gate on this flag (or on the live source
+    //  returned by Scores.load()), so a partial SDK load is treated
+    //  as "not ready" rather than silently falling through.
     // ----------------------------------------------------------
-    const HAS_PORTAL = !!(window.portal && typeof window.portal.getUser === 'function');
+    let portalReady = false;
     let user = { displayName: 'Player', email: 'local@dev', roles: [] };
 
     async function bootPortal() {
-      if (!HAS_PORTAL) return;
+      if (!window.portal || typeof window.portal.getUser !== 'function') return;
       try {
         const u = await window.portal.getUser();
-        if (u && typeof u === 'object') {
-          user = {
-            displayName: String(u.displayName || u.email || 'Player').slice(0, 60),
-            email:       String(u.email || 'unknown@unknown').slice(0, 120),
-            roles:       Array.isArray(u.roles) ? u.roles : [],
-          };
-        }
+        if (!u || typeof u !== 'object') return;
+        user = {
+          displayName: String(u.displayName || u.email || 'Player').slice(0, 60),
+          email:       String(u.email || 'unknown@unknown').slice(0, 120),
+          roles:       Array.isArray(u.roles) ? u.roles : [],
+        };
+        portalReady = true;
       } catch {
-        // Stay with default fallback user
+        // SDK present but identity didn't resolve. Stay in fallback;
+        // banner stays visible, scoreboard pill stays 'on-device'.
       }
     }
 
@@ -794,44 +807,67 @@
     }
 
     // ----------------------------------------------------------
-    //  Storage layer (portal first, local fallback, all sandbox safe)
+    //  Storage layer
     // ----------------------------------------------------------
+
+    // Sandbox-safe local store. Order: portal.storage (the SDK's safe
+    // localStorage replacement that returns null/false on SecurityError)
+    // → try/catch'd localStorage → no-op. localStorage may *throw* in
+    // the no-allow-same-origin sandbox, so every direct access is
+    // guarded.
     const Local = {
       get(k, fallback = null) {
+        if (window.portal?.storage?.get) {
+          try { const v = window.portal.storage.get(k); if (v != null) return v; }
+          catch {}
+        }
         try { const v = localStorage.getItem(k); return v == null ? fallback : v; }
         catch { return fallback; }
       },
-      set(k, v) { try { localStorage.setItem(k, v); } catch {} },
-      del(k)    { try { localStorage.removeItem(k); }  catch {} },
+      set(k, v) {
+        if (window.portal?.storage?.set) {
+          try { window.portal.storage.set(k, v); return; } catch {}
+        }
+        try { localStorage.setItem(k, v); } catch {}
+      },
+      del(k) {
+        if (window.portal?.storage?.remove) {
+          try { window.portal.storage.remove(k); return; } catch {}
+        }
+        try { localStorage.removeItem(k); } catch {}
+      },
     };
 
-    // Per-user prefs go to portal.data (cloud, signed-in user) when available.
+    // Per-user prefs: prefer portal.data (per-user cloud KV, max
+    // 100 KB/key, 50 keys/user), then fall through to Local.
     const Prefs = {
       async get(key, fallback = null) {
-        if (HAS_PORTAL && window.portal.data) {
-          try { const v = await window.portal.data.get(key); return v == null ? fallback : v; }
+        if (window.portal?.data?.get) {
+          try { const v = await window.portal.data.get(key); if (v != null) return v; }
           catch {}
         }
         return Local.get('bc_' + key, fallback);
       },
       async set(key, value) {
-        if (HAS_PORTAL && window.portal.data) {
+        if (window.portal?.data?.set) {
           try { await window.portal.data.set(key, value); return; } catch {}
         }
         Local.set('bc_' + key, String(value));
       },
     };
 
-    // Shared scoreboard via portal.sharedData (visible to all portal users).
+    // Shared scoreboard via portal.sharedData (visible to all portal
+    // users of this tool, max 500 KB/key). Source is reported back
+    // so the UI can flip its 'team' / 'on-device' pill correctly.
     const SCORE_KEY = 'leaderboard_v1';
     const Scores = {
       async load() {
-        if (HAS_PORTAL && window.portal.sharedData) {
+        if (window.portal?.sharedData?.get) {
           try {
             const raw = await window.portal.sharedData.get(SCORE_KEY);
             const list = raw && Array.isArray(raw.entries) ? raw.entries : [];
             return { entries: list, source: 'portal' };
-          } catch (err) {
+          } catch {
             return { entries: [], source: 'error', error: 'load_failed' };
           }
         }
@@ -844,7 +880,7 @@
       },
       async save(entries) {
         const trimmed = entries.slice(0, 50);
-        if (HAS_PORTAL && window.portal.sharedData) {
+        if (window.portal?.sharedData?.set) {
           try { await window.portal.sharedData.set(SCORE_KEY, { entries: trimmed }); return true; }
           catch { return false; }
         }
@@ -1766,6 +1802,11 @@
     //  Boot
     // ----------------------------------------------------------
     (async function boot() {
+      // Wait for portal.getUser() to either resolve or fail. portalReady
+      // is the single source of truth for "we're really inside the
+      // portal with a known user" — used to gate the local-mode banner
+      // below. Render the rest of the menu only after this so user.*
+      // values are final, never placeholder.
       await bootPortal();
 
       // Greeting
@@ -1785,10 +1826,12 @@
         greet.parentElement.appendChild(role);
       }
 
-      // Local-mode notice
-      if (!HAS_PORTAL) {
-        document.getElementById('local-notice').hidden = false;
-      }
+      // Local-mode notice. Hidden by default in the HTML (no flash on
+      // portal-OK loads). We *only* reveal it when getUser() didn't
+      // resolve — i.e., we're genuinely outside the portal (or the SDK
+      // is broken). It hides itself the instant portalReady is true.
+      const notice = document.getElementById('local-notice');
+      if (notice) notice.hidden = portalReady;
 
       // Last-mode preference
       try {
