@@ -1042,14 +1042,32 @@
           return { entries: [], source: 'local' };
         }
       },
+      // Returns { ok, source, error } so callers can surface the actual
+      // failure instead of treating every problem as a generic "couldn't
+      // reach the scoreboard". `source` is one of:
+      //   'portal'         — wrote to portal.sharedData successfully
+      //   'local-fallback' — sharedData.set threw, wrote to Local instead
+      //   'local'          — SDK absent, wrote to Local
+      //   'none'           — both layers failed
       async save(entries) {
         const trimmed = entries.slice(0, 50);
         if (window.portal?.sharedData?.set) {
-          try { await window.portal.sharedData.set(SCORE_KEY, { entries: trimmed }); return true; }
-          catch { return false; }
+          try {
+            await window.portal.sharedData.set(SCORE_KEY, { entries: trimmed });
+            return { ok: true, source: 'portal', error: null };
+          } catch (err) {
+            const msg = err && err.message ? String(err.message).slice(0, 200) : 'unknown';
+            try { Local.set('bc_' + SCORE_KEY, JSON.stringify(trimmed)); } catch {}
+            return { ok: false, source: 'local-fallback', error: msg };
+          }
         }
-        Local.set('bc_' + SCORE_KEY, JSON.stringify(trimmed));
-        return true;
+        try {
+          Local.set('bc_' + SCORE_KEY, JSON.stringify(trimmed));
+          return { ok: true, source: 'local', error: null };
+        } catch (err) {
+          const msg = err && err.message ? String(err.message).slice(0, 200) : 'unknown';
+          return { ok: false, source: 'none', error: msg };
+        }
       },
       async clearLocal() { Local.del('bc_' + SCORE_KEY); },
     };
@@ -1408,14 +1426,45 @@
       }
       entries.sort((a, b) => (b.score || 0) - (a.score || 0));
       const trimmed = entries.slice(0, 50);
-      const ok = await Scores.save(trimmed);
+      const saveResult = await Scores.save(trimmed);
+
+      // Round-trip verification: re-read the store and confirm our entry
+      // actually persisted. If the portal accepted the write but lost it
+      // (eviction, sandbox quirk, replication lag), `saved` will be true
+      // but `verified` will be false — caller can surface that distinction.
+      let verified = false;
+      let verifySource = null;
+      try {
+        const reload = await Scores.load();
+        verifySource = reload.source;
+        verified = (reload.entries || []).some(
+          e => e.email === user.email && (e.score || 0) >= state.score
+        );
+      } catch {
+        verified = false;
+      }
 
       track(improved ? 'score_personal_best' : 'score_submitted', {
-        score: state.score, mode: state.mode, max_combo: state.maxCombo,
+        score: state.score,
+        mode: state.mode,
+        max_combo: state.maxCombo,
+        saved: saveResult.ok,
+        save_source: saveResult.source,
+        save_error: saveResult.error || null,
+        verified,
+        verify_source: verifySource,
       });
 
       const rank = trimmed.findIndex(e => e.email === user.email);
-      return { improved, rank, saved: ok, isHigh: rank === 0 && improved };
+      return {
+        improved,
+        rank,
+        saved: saveResult.ok,
+        saveSource: saveResult.source,
+        saveError: saveResult.error,
+        verified,
+        isHigh: rank === 0 && improved,
+      };
     }
 
     // ----------------------------------------------------------
@@ -1491,7 +1540,21 @@
       verdict.textContent = 'Saving score…';
       verdict.className = 'verdict muted';
       const result = await submitScore();
-      if (result.isHigh) {
+
+      // 1) Hard failures get rendered first — the rank/PB messaging is
+      //    misleading if the score never actually persisted.
+      // 2) Otherwise: PB / top-10 / new #1 / "didn't beat best".
+      // 3) "saved but unverified" is a soft warning layered after.
+      if (!result.saved) {
+        // Save path threw outright (or local layer is also dead).
+        const detail = result.saveError ? ` (${result.saveError})` : '';
+        if (result.saveSource === 'local-fallback') {
+          verdict.textContent = `Saved on-device only — team scoreboard rejected the write${detail}`;
+        } else {
+          verdict.textContent = `Couldn't save score${detail}`;
+        }
+        verdict.className = 'verdict muted';
+      } else if (result.isHigh) {
         verdict.textContent = '🥇 New team #1';
         verdict.className = 'verdict';
         emoji.textContent = '🏆';
@@ -1505,9 +1568,12 @@
         verdict.textContent = "Didn't beat your previous best — try again";
         verdict.className = 'verdict muted';
       }
-      if (!result.saved) {
-        verdict.textContent = "Couldn't reach the team scoreboard — saved on-device";
-        verdict.className = 'verdict muted';
+
+      // Soft warning: portal accepted the write but our verification
+      // re-read didn't see the entry. Don't overwrite a "save failed"
+      // message — only annotate the success paths.
+      if (result.saved && !result.verified && result.improved) {
+        verdict.textContent += ' · saved, refresh if it doesn\'t appear';
       }
 
       await refreshLB();
