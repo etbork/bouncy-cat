@@ -1030,9 +1030,13 @@
           try {
             const raw = await window.portal.sharedData.get(SCORE_KEY);
             const list = raw && Array.isArray(raw.entries) ? raw.entries : [];
-            return { entries: list, source: 'portal' };
-          } catch {
-            return { entries: [], source: 'error', error: 'load_failed' };
+            // Expose `raw` so verification/diagnostics can see exactly
+            // what shape the portal handed back (null vs {} vs wrapped envelope).
+            return { entries: list, source: 'portal', raw };
+          } catch (err) {
+            const msg = err && err.message ? String(err.message).slice(0, 200) : String(err);
+            console.warn('[bouncy-cat] portal.sharedData.get threw:', err);
+            return { entries: [], source: 'error', error: msg };
           }
         }
         try {
@@ -1434,14 +1438,45 @@
       // but `verified` will be false — caller can surface that distinction.
       let verified = false;
       let verifySource = null;
+      let verifyRaw = undefined;
+      let verifyEntryCount = 0;
       try {
         const reload = await Scores.load();
         verifySource = reload.source;
+        verifyRaw = reload.raw;
+        verifyEntryCount = (reload.entries || []).length;
         verified = (reload.entries || []).some(
           e => e.email === user.email && (e.score || 0) >= state.score
         );
-      } catch {
+      } catch (err) {
+        console.warn('[bouncy-cat] verify reload threw:', err);
         verified = false;
+      }
+
+      // Hand the developer a one-shot diagnostic in DevTools when the
+      // portal acks the write but the very next read returns nothing.
+      // This is exactly the bug the screenshot showed — and the only
+      // useful thing we can do client-side is hand the portal team a
+      // concrete reproduction.
+      if (saveResult.ok && saveResult.source === 'portal' && !verified) {
+        try {
+          console.group('[bouncy-cat] save verification failed');
+          console.warn('Wrote score:', state.score, 'for', user.email);
+          console.warn('Save key:', SCORE_KEY);
+          console.warn('Save returned:', saveResult);
+          console.warn('Verify reload source:', verifySource);
+          console.warn('Verify reload entry count:', verifyEntryCount);
+          console.warn('Verify reload raw payload:', verifyRaw);
+          console.warn(
+            'Interpretation: portal.sharedData.set resolved without error, ' +
+            'but portal.sharedData.get on the same key immediately after ' +
+            'returned ' + (verifyRaw === undefined ? 'undefined' :
+                           verifyRaw === null ? 'null' :
+                           'a payload that did not contain our entry') + '.'
+          );
+          console.warn('Send this group to the portal team — it is a sharedData persistence bug.');
+          console.groupEnd();
+        } catch {}
       }
 
       track(improved ? 'score_personal_best' : 'score_submitted', {
@@ -1453,6 +1488,7 @@
         save_error: saveResult.error || null,
         verified,
         verify_source: verifySource,
+        verify_entry_count: verifyEntryCount,
       });
 
       const rank = trimmed.findIndex(e => e.email === user.email);
@@ -1463,6 +1499,7 @@
         saveSource: saveResult.source,
         saveError: saveResult.error,
         verified,
+        verifySource,
         isHigh: rank === 0 && improved,
       };
     }
@@ -1569,11 +1606,16 @@
         verdict.className = 'verdict muted';
       }
 
-      // Soft warning: portal accepted the write but our verification
-      // re-read didn't see the entry. Don't overwrite a "save failed"
-      // message — only annotate the success paths.
+      // Hard warning: portal accepted the write but our immediate
+      // re-read didn't see the entry. The team scoreboard panel below
+      // will be empty too, so promising "refresh if it doesn't appear"
+      // is a lie. Be honest — and point at DevTools where we logged
+      // the full diagnostic.
       if (result.saved && !result.verified && result.improved) {
-        verdict.textContent += ' · saved, refresh if it doesn\'t appear';
+        verdict.textContent =
+          '⚠ Score didn\'t round-trip — portal accepted the write but ' +
+          'returned no data on re-read. Open DevTools console for details.';
+        verdict.className = 'verdict muted';
       }
 
       await refreshLB();
