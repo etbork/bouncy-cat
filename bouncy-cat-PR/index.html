@@ -1055,22 +1055,34 @@
       //   'none'           — both layers failed
       async save(entries) {
         const trimmed = entries.slice(0, 50);
+        // Single emit point: every return path runs through `report()`
+        // so the portal team sees `leaderboard_save_result` with the
+        // exact shape they asked for, regardless of which branch fired.
+        const report = (result) => {
+          track('leaderboard_save_result', {
+            ok: !!result.ok,
+            source: result.source,
+            entries: trimmed.length,
+            error: result.error || '',
+          });
+          return result;
+        };
         if (window.portal?.sharedData?.set) {
           try {
             await window.portal.sharedData.set(SCORE_KEY, { entries: trimmed });
-            return { ok: true, source: 'portal', error: null };
+            return report({ ok: true, source: 'portal', error: null });
           } catch (err) {
             const msg = err && err.message ? String(err.message).slice(0, 200) : 'unknown';
             try { Local.set('bc_' + SCORE_KEY, JSON.stringify(trimmed)); } catch {}
-            return { ok: false, source: 'local-fallback', error: msg };
+            return report({ ok: false, source: 'local-fallback', error: msg });
           }
         }
         try {
           Local.set('bc_' + SCORE_KEY, JSON.stringify(trimmed));
-          return { ok: true, source: 'local', error: null };
+          return report({ ok: true, source: 'local', error: null });
         } catch (err) {
           const msg = err && err.message ? String(err.message).slice(0, 200) : 'unknown';
-          return { ok: false, source: 'none', error: msg };
+          return report({ ok: false, source: 'none', error: msg });
         }
       },
       async clearLocal() { Local.del('bc_' + SCORE_KEY); },
@@ -1513,7 +1525,9 @@
       state.phase = STATE.PLAYING;
       state.score = 0; state.combo = 0; state.maxCombo = 0; state.hits = 0;
       state.lives = 3;
-      state.timeLeft = 60;
+      // TESTING: shortened from 60s for portal sharedData repro work.
+      // Restore to 60 before shipping.
+      state.timeLeft = 10;
       state.elapsed = 0;
       state.lastComboHit = 0;
       state.topSpeed = 0;
