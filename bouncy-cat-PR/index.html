@@ -299,6 +299,10 @@
     .powerup-chip .timer { opacity: 0.7; font-weight: 600; }
 
     /* Overlays ---------------------------------------------------------- */
+    /* Overlay is JUST the backdrop — never scrolls. The card inside
+       scrolls if its own content overflows. Having overflow:auto on
+       both made the menu show a redundant outer scrollbar even when
+       the card already had an internal one. */
     .overlay {
       position: fixed; inset: 0;
       display: flex;
@@ -309,7 +313,7 @@
       -webkit-backdrop-filter: blur(12px);
       z-index: 100;
       padding: 24px;
-      overflow-y: auto;
+      overflow: hidden;
     }
     .overlay.hidden { display: none; }
 
@@ -317,12 +321,26 @@
       width: min(560px, 100%);
       max-height: calc(100vh - 48px);
       overflow-y: auto;
+      overscroll-behavior: contain;
+      /* Thin, theme-matched scrollbar so it doesn't read as a default
+         OS chrome bar plopped onto a dark neon panel. */
+      scrollbar-width: thin;
+      scrollbar-color: rgba(0, 240, 255, 0.45) transparent;
       background: var(--bg-card);
       border: 1px solid var(--border-strong);
       border-radius: var(--radius-lg);
       padding: 32px 32px 26px;
       box-shadow: var(--shadow-pop), 0 0 64px rgba(0, 240, 255, 0.08), 0 0 32px rgba(255, 43, 177, 0.06);
       position: relative;
+    }
+    .card::-webkit-scrollbar { width: 8px; }
+    .card::-webkit-scrollbar-track { background: transparent; }
+    .card::-webkit-scrollbar-thumb {
+      background: rgba(0, 240, 255, 0.35);
+      border-radius: 999px;
+    }
+    .card::-webkit-scrollbar-thumb:hover {
+      background: rgba(0, 240, 255, 0.6);
     }
     /* Animated neon gradient frame around the card. */
     .card::before {
@@ -387,18 +405,6 @@
       letter-spacing: 0.06em;
       text-transform: uppercase;
     }
-    .greet .role-pill {
-      font-size: 10px;
-      font-weight: 800;
-      padding: 2px 8px;
-      border-radius: 999px;
-      background: var(--violet);
-      color: var(--bg-deep);
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      box-shadow: 0 0 10px rgba(184, 115, 255, 0.5);
-    }
-
     /* Section headings -------------------------------------------------- */
     .heading {
       display: flex;
@@ -1967,22 +1973,15 @@
       // values are final, never placeholder.
       await bootPortal();
 
-      // Greeting
+      // Greeting — name only. Role badges intentionally omitted; the
+      // portal chrome already surfaces user role, so duplicating it
+      // inside every tool just adds noise.
       const greet = document.getElementById('greet-text');
-      const isAdmin = !!(window.portal?.isAdmin && window.portal.isAdmin());
-      const isSuper = !!(window.portal?.isSuperAdmin && window.portal.isSuperAdmin());
       greet.replaceChildren();
       greet.append(document.createTextNode('Hi, '));
       const strong = document.createElement('strong');
       strong.textContent = user.displayName;
       greet.appendChild(strong);
-      if (isSuper || isAdmin) {
-        greet.parentElement.append(' ');
-        const role = document.createElement('span');
-        role.className = 'role-pill';
-        role.textContent = isSuper ? 'Super admin' : 'Admin';
-        greet.parentElement.appendChild(role);
-      }
 
       // Local-mode notice. Hidden by default in the HTML (no flash on
       // portal-OK loads). We *only* reveal it when getUser() didn't
